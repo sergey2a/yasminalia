@@ -1,11 +1,15 @@
 /*
- * ESP32-S3 N16R8 + INMP441 + MAX98357 + ST7789 (SPI) + сенсорная кнопка
+ * ESP32-S3 N16R8 + INMP441 + MAX98357 + GC9A01 (SPI) + сенсорная кнопка
  * Tatarser OLD server: https://tatarser.213-109-202-195.sslip.io
+ *
+ * ВАЖНО: включите PSRAM (OPI PSRAM). Плата: ESP32S3 Dev Module.
+ *        Библиотеки: Adafruit GC9A01A, Adafruit GFX, ArduinoJson
  */
 
 #include <Arduino.h>
+#include <Wire.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_ST7789.h>
+#include <Adafruit_GC9A01A.h>
 #include <SPI.h>
 #include "driver/i2s.h"
 #include "esp_heap_caps.h"
@@ -16,8 +20,8 @@
 #include <ArduinoJson.h>
 
 // ================= НАСТРОЙКИ =================
-const char* WIFI_SSID = "WiFi SSID";
-const char* WIFI_PASS = "PASSWORD";
+const char* WIFI_SSID = "HUAWEI-1GE3PE";
+const char* WIFI_PASS = "$Intellect$1996";
 
 const char* API_HOST = "https://tatarser.213-109-202-195.sslip.io";
 const char* API_PATH = "/v1/dialog/audio";
@@ -25,21 +29,16 @@ const char* API_PATH = "/v1/dialog/audio";
 const char* SPEAKER       = "alsu";
 const char* OUTPUT_FORMAT = "wav";
 
-// ================= ЭКРАН ST7789 (SPI) =================
+// ================= ЭКРАН GC9A01 (SPI) =================
 #define TFT_CS    10
 #define TFT_DC    11
 #define TFT_RST   12
 #define TFT_SCLK  9
 #define TFT_MOSI  8
-#define TFT_BLK   -1     // если BLK подключён к пину — впиши номер, иначе -1
 
-// Размер экрана — подгони под свой модуль
-#define TFT_WIDTH   240
-#define TFT_HEIGHT  320
+Adafruit_GC9A01A tft(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
 
-Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
-
-// ================= КНОПКА =================
+// ================= СЕНСОРНАЯ КНОПКА =================
 #define TOUCH_PIN 4
 
 // ================= I2S ПИНЫ =================
@@ -78,13 +77,19 @@ String toDisplayable(const String &s, size_t maxLen) {
 }
 
 void tftMsg(const String &l1, const String &l2 = "", const String &l3 = "") {
-    tft.fillScreen(ST77XX_BLACK);
+    tft.fillScreen(GC9A01A_BLACK);
     tft.setTextSize(2);
-    tft.setTextColor(ST77XX_WHITE);
-    tft.setCursor(0, 0);
+    tft.setTextColor(GC9A01A_WHITE);
+    tft.setCursor(20, 80);
     tft.println(toDisplayable(l1, 16));
-    if (l2.length()) tft.println(toDisplayable(l2, 16));
-    if (l3.length()) tft.println(toDisplayable(l3, 16));
+    if (l2.length()) {
+        tft.setCursor(20, 110);
+        tft.println(toDisplayable(l2, 16));
+    }
+    if (l3.length()) {
+        tft.setCursor(20, 140);
+        tft.println(toDisplayable(l3, 16));
+    }
 }
 
 // ================= I2S =================
@@ -114,12 +119,7 @@ void initI2SMic() {
     i2s_zero_dma_buffer(I2S_MIC_PORT);
 }
 
-static bool spkInstalled = false;
-
 void initI2SSpeaker(uint32_t sr = SAMPLE_RATE) {
-    if (spkInstalled) {
-        i2s_driver_uninstall(I2S_SPK_PORT);
-    }
     i2s_config_t cfg = {
         .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
         .sample_rate = sr,
@@ -133,6 +133,7 @@ void initI2SSpeaker(uint32_t sr = SAMPLE_RATE) {
         .tx_desc_auto_clear = true,
         .fixed_mclk = 0
     };
+    i2s_driver_uninstall(I2S_SPK_PORT);
     i2s_driver_install(I2S_SPK_PORT, &cfg, 0, NULL);
     i2s_pin_config_t pins = {
         .mck_io_num   = I2S_PIN_NO_CHANGE,
@@ -143,10 +144,9 @@ void initI2SSpeaker(uint32_t sr = SAMPLE_RATE) {
     };
     i2s_set_pin(I2S_SPK_PORT, &pins);
     i2s_zero_dma_buffer(I2S_SPK_PORT);
-    spkInstalled = true;
 }
 
-// ================= base64 =================
+// ================= base64 decode =================
 int base64Decode(const String &b64, uint8_t **outBuf) {
     size_t n = b64.length();
     if (n == 0 || (n & 3) != 0) return -1;
@@ -294,7 +294,10 @@ bool playWavBytes(const uint8_t *bin, size_t binLen) {
     Serial.printf("[play] WAV: %u ch, %u bit, %u Hz, %u байт\n",
                   channels, bits, sampleRate, (unsigned)pcmBytes);
 
-    if (bits != 16) return false;
+    if (bits != 16) {
+        Serial.println("[play] Только 16-bit PCM");
+        return false;
+    }
 
     if (sampleRate != 0 && sampleRate != SAMPLE_RATE) {
         initI2SSpeaker(sampleRate);
@@ -408,7 +411,7 @@ String postDialogAudio(const uint8_t *wav, size_t wavLen) {
 
     String resp;
     if (code > 0) {
-        Serial.printf("[HTTP] %d, body=%u байт\n", code, (unsigned)http.getSize());
+        Serial.printf("[HTTP] %d, body=%u байт\n", code, http.getSize());
         resp = http.getString();
     } else {
         Serial.printf("[HTTP] err: %s\n", http.errorToString(code).c_str());
@@ -461,42 +464,41 @@ bool handleResponse(const String &resp) {
 void setup() {
     Serial.begin(115200);
     delay(300);
-    Serial.println("\nStart");
+    Serial.println("\n=== Start ===");
 
     pinMode(TOUCH_PIN, INPUT);
+    Serial.println("[1] pinMode OK");
 
-    // Подсветка (если BLK подключён к пину)
-    if (TFT_BLK >= 0) {
-        pinMode(TFT_BLK, OUTPUT);
-        digitalWrite(TFT_BLK, HIGH);
-    }
-
-    // ===== ИНИЦИАЛИЗАЦИЯ ST7789 =====
-    // Сначала инициализируем SPI шину с нужными пинами,
-    // потом уже tft.init() — это ключевой момент для кастомных пинов.
     SPI.begin(TFT_SCLK, -1, TFT_MOSI, TFT_CS);
+    Serial.println("[2] SPI.begin OK");
 
-    tft.init(TFT_WIDTH, TFT_HEIGHT, SPI_MODE0);
-    tft.setSPISpeed(20000000);   // 20 МГц, если полосы — уменьши до 10000000
+    tft.begin();
+    Serial.println("[3] tft.begin OK");
+
     tft.setRotation(0);
-    tft.fillScreen(ST77XX_BLACK);
-
-    // Тест: три цветных полосы — если видишь их, значит экран живой
-    tft.fillRect(0, 0,   TFT_WIDTH, TFT_HEIGHT/3, ST77XX_RED);
-    tft.fillRect(0, TFT_HEIGHT/3, TFT_WIDTH, TFT_HEIGHT/3, ST77XX_GREEN);
-    tft.fillRect(0, 2*TFT_HEIGHT/3, TFT_WIDTH, TFT_HEIGHT/3, ST77XX_BLUE);
-    delay(1500);
-
+    tft.fillScreen(GC9A01A_BLACK);
     tftMsg("Tatarser", "Boot...");
+    Serial.println("[4] tft draw OK");
 
     pcmBuf = (int16_t*) heap_caps_malloc(MAX_PCM_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!pcmBuf) pcmBuf = (int16_t*) malloc(MAX_PCM_BYTES);
-    if (!pcmBuf) { tftMsg("No PSRAM!"); while (true) delay(1000); }
+    if (!pcmBuf) {
+        Serial.println("[!] Нет памяти под pcmBuf");
+        tftMsg("No PSRAM!");
+        while (true) delay(1000);
+    }
+    Serial.println("[5] pcmBuf OK");
 
     initI2SMic();
+    Serial.println("[6] mic OK");
     initI2SSpeaker();
+    Serial.println("[7] spk OK");
+
     connectWiFi();
+    Serial.println("[8] wifi OK");
+
     tftMsg("Gotov", "Kosnis knopki");
+    Serial.println("[9] ready");
 }
 
 void loop() {
