@@ -1,0 +1,4 @@
+.pio/
+preview-out/
+include/secrets.h
+__pycache__/
