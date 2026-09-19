@@ -20,8 +20,8 @@
 #include <ArduinoJson.h>
 
 // ================= НАСТРОЙКИ =================
-const char* WIFI_SSID = "HUAWEI-1GE3PE";
-const char* WIFI_PASS = "$Intellect$1996";
+const char* WIFI_SSID = "SSID";
+const char* WIFI_PASS = "PASS";
 
 const char* API_HOST = "https://tatarser.213-109-202-195.sslip.io";
 const char* API_PATH = "/v1/dialog/audio";
